@@ -1,0 +1,870 @@
+---
+title: "Shower Thought Surveys #1: Music in Your Head"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+---
+
+# Introduction
+
+Welcome to the analysis and results of the first Shower Thought Surveys series, an initiative to conduct large-ish surveys on reddit's /r/SampleSize subreddit about interesting "shower thought" questions that pop into my head -- with a dash of analytical rigor. Sometimes I have odd thoughts in my head, and as a researcher, I want some data and hopefully answers to all those questions that occasionally pop up!
+
+Also, it's good practice to keep coding in R and learning new techniques, as well as to make these kind of analyses and data readily available to people in an open-source manner to aid with their own exploration and practice.
+
+# Background & Research Questions
+
+The primary research question of Shower Thought Surveys #1 was: **What are people's experiences when they get music stuck in their head?**
+
+Personally, I find that it's pretty frequent that I have a song stuck in my head. In fact, I can have the *same* song stuck in my head on loop for days or even weeks at a time. My partner, however, said it was extremely uncommon. And so I wondered: what experiences do people have with so-called musical "earworms," and do those experiences relate to any common traits, attitudes, or behaviors?
+
+If you're interested in academic work on this topic, [Beaman (2018)](https://centaur.reading.ac.uk/79201/1/History%20of%20the%20earworm%20resubmission.pdf) [PDF] provides a nice historical, theoretical, and empirical overview of music getting stuck in people's heads. Previously, [Beaman and Williams (2010)](https://centaur.reading.ac.uk/5755/1/earworms_write-upBJP.pdf) [PDF] ran a 103-participant survey looking at people's experiences with mentally-repeating music. Further, [Beaty et al. (2013)](https://cpb-us-e1.wpmucdn.com/sites.psu.edu/dist/c/122043/files/2020/08/2013_Beaty_ConscCogn.pdf) [PDF] ran a 190-N survey as well, asking similar questions and in particular connecting it to musical vs. non-musical individual traits. So it seemed like a good opportunity to scale up and update these empirical data. I was also curious how much people's attitudes and behaviors, as well as traits and demographics, related to the potential commonality of musical earworm experiences. (And to be honest, I didn't read too much into these papers before writing this first Shower Thought Survey, so looking back, I probably could have spent a bit more time seeing what had been covered and exploring a bit more territory.) Coincidentally, the domain of "involuntary musical imagery (INMI)" has been fairly well-reviewed, and [Liikkanen & Jakubowski (2020)](https://link.springer.com/content/pdf/10.3758/s13423-020-01750-7.pdf) [PDF] provide a solid overview of the literature, particularly from an empirical perspective (covering especially surveys and experience sampling methodologies).
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+
+library(googlesheets4)
+library(tidyverse)
+library(srvyr)
+library(broom)
+library(tidytext)
+library(igraph)
+library(ggraph)
+library(widyr)
+library(topicmodels)
+
+```
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+
+#READING IN DATA
+musichead.df.raw <- read_sheet('https://docs.google.com/spreadsheets/d/1u8_iW25YpL2__q_0FJQ5CQ-LNQkUchz3yVOFUm2oHIQ/edit',
+                               col_types = 'Dccccccccccccccccccccccicccccc')
+
+# BACKING UP DATA
+musichead.df <- musichead.df.raw
+
+```
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+
+# RENAMING COLUMNS
+musichead.df <- rename(musichead.df, 
+                       timestamp = `Timestamp`, 
+                       how_frequently_hear_music = `How frequently do you hear music playing in your head, if at all?`,
+                       kind_of_music = `When you hear music in your head, what kind of music is it?`,
+                       pleasant_or_annoying = `When you hear music in your head, is it a pleasant or annoying experience?`,
+                       music_last_how_long = `When you hear music in your head, how long does it tend to last?`,
+                       music_type_hear_most_often = `During an average period when you hear music in your head, which of the following do you tend to hear MOST often?`,
+                       how_often_daydream = `How often do you find yourself fantasizing or day-dreaming?`,
+                       visualize_objects_easy_hard = `Is it easy or difficult for you to visualize objects, places, or concepts in your head?`,
+                       focus_attention_easy_hard = `Is it easy or difficult for you to focus your attention on everyday tasks or conversations with people?`,
+                       inner_voice_yn = `Do you have an "inner voice" with which you speak to yourself?`,
+                       how_often_listen_play_music = `On average, how many days per week do you listen to or play music?`,
+                       hobbies_related_music_yn = `Are your hobbies related to music?`,
+                       professional_music_training_yn = `Have you ever been professionally trained as a musician, singer, composer, etc.?`,
+                       occupation_music_yn = `Is your occupation related to music?`,
+                       grid_how_often_whistle = `How often do you do any of the following when alone or in small groups? [Whistle]`,
+                       grid_how_often_dance = `How often do you do any of the following when alone or in small groups? [Dance]`,
+                       grid_how_often_hum = `How often do you do any of the following when alone or in small groups? [Hum]`,
+                       grid_how_often_sing = `How often do you do any of the following when alone or in small groups? [Sing]`,
+                       grid_how_often_tap = `How often do you do any of the following when alone or in small groups? [Tap feet/fingers]`,
+                       stucksong_pleasing_annoying = `If you happen to get one song stuck in your head, how pleasing or annoying is that experience?`,
+                       lastmonth_satisfaction = `During the last month, how satisfied have you been with your life?`,
+                       lastmonth_goodbad_felt = `During the last month, how good or bad have you felt?`,
+                       introvert_extrovert = `Would you consider yourself to be more of an introverted or an extroverted individual?`,
+                       year_born = `What year were you born?`,
+                       country = `What country do you currently reside in?`,
+                       education_years = `How many years of formal education have you had?`,
+                       gender = `What gender do you identify as?`,
+                       religious_yn = `Would you consider yourself to be a religious person?`,
+                       political_pov = `How would you describe your own political point of view?`,
+                       hearmusic_experience_openend = `When you hear music in your head, describe what the experience is like (in as much detail as possible).`)
+
+# RECODING DATA
+musichead.df <- musichead.df %>%
+  mutate(how_frequently_hear_music = fct_relevel(as.factor(how_frequently_hear_music),
+                                             'Never', 'Rarely', 'Sometimes', 'Frequently', 'Almost all the time'),
+         how_frequently_hear_music_num = as.numeric(fct_recode(how_frequently_hear_music,
+                                                '1' = 'Never',
+                                                '2' = 'Rarely',
+                                                '3' = 'Sometimes',
+                                                '4' = 'Frequently',
+                                                '5' = 'Almost all the time')),
+         kind_of_music = fct_relevel(as.factor(kind_of_music),
+                                     'Only vocal music (e.g., word sounds)', 'Both vocal and instrumental music', 'Only instrumental music (e.g., non-word sounds)'),
+         pleasant_or_annoying = fct_relevel(as.factor(pleasant_or_annoying),
+                                            'Very annoying', 'Somewhat annoying', 'Neither pleasant nor annoying', 'Somewhat pleasant', 'Very pleasant'),
+         pleasant_or_annoying_num = as.numeric(fct_recode(pleasant_or_annoying,
+                                                '1' = 'Very annoying',
+                                                '2' = 'Somewhat annoying',
+                                                '3' = 'Neither pleasant nor annoying',
+                                                '4' = 'Somewhat pleasant',
+                                                '5' = 'Very pleasant')),
+         music_last_how_long = fct_relevel(as.factor(music_last_how_long),
+                                           'Less than 15 minutes', 'Between 30 minutes and 15 minutes', 'Between 1 hour and 30 minutes', 'A couple of hours', 'Many hours'),
+         music_last_how_long_num = as.numeric(fct_recode(music_last_how_long,
+                                          '1' = 'Less than 15 minutes',
+                                          '2' = 'Between 30 minutes and 15 minutes',
+                                          '3' = 'Between 1 hour and 30 minutes',
+                                          '4' = 'A couple of hours',
+                                          '5' = 'Many hours')),
+         music_type_hear_most_often = ifelse(music_type_hear_most_often %in% c('One song or tune repeated',
+                                                                                   'Multiple songs or tunes in sequence, one after another',
+                                                                                   'A random assortment of sounds'), music_type_hear_most_often, 'Another experience'),
+         music_type_hear_most_often = fct_relevel(as.factor(music_type_hear_most_often),
+                                                  'One song or tune repeated',
+                                                  'Multiple songs or tunes in sequence, one after another',
+                                                  'A random assortment of sounds',
+                                                  'Another experience'),
+         how_often_daydream = fct_relevel(as.factor(how_often_daydream),
+                                          'Never', 'Rarely', 'Sometimes', 'Frequently', 'Almost all the time'),
+         how_often_daydream_num = as.numeric(fct_recode(how_often_daydream,
+                                         '1' = 'Never',
+                                         '2' = 'Rarely',
+                                         '3' = 'Sometimes',
+                                         '4' = 'Frequently',
+                                         '5' = 'Almost all the time')),
+         visualize_objects_easy_hard = fct_relevel(as.factor(visualize_objects_easy_hard),
+                                                  'Very difficult', 'Somewhat difficult', 'Neither easy nor difficult', 'Somewhat easy', 'Very easy'),
+         visualize_objects_easy_hard_num = as.numeric(fct_recode(visualize_objects_easy_hard,
+                                                  '1' = 'Very difficult',
+                                                  '2' = 'Somewhat difficult',
+                                                  '3' = 'Neither easy nor difficult',
+                                                  '4' = 'Somewhat easy',
+                                                  '5' = 'Very easy')),
+         focus_attention_easy_hard = fct_relevel(as.factor(focus_attention_easy_hard),
+                                                 'Very difficult', 'Somewhat difficult', 'Neither easy nor difficult', 'Somewhat easy', 'Very easy'),
+         focus_attention_easy_hard_num = as.numeric(fct_recode(focus_attention_easy_hard,
+                                                   '1' = 'Very difficult',
+                                                   '2' = 'Somewhat difficult',
+                                                   '3' = 'Neither easy nor difficult',
+                                                   '4' = 'Somewhat easy',
+                                                   '5' = 'Very easy')),
+         inner_voice_yn = as.factor(inner_voice_yn),
+         inner_voice_yn_num = as.numeric(fct_recode(inner_voice_yn,
+                                     '0' = 'No',
+                                     '1' = 'Yes')),
+         how_often_listen_play_music = as.numeric(how_often_listen_play_music),
+         hobbies_related_music_yn = as.factor(hobbies_related_music_yn),
+         hobbies_related_music_yn_num = as.numeric(fct_recode(hobbies_related_music_yn,
+                                                              '0' = 'No',
+                                                              '1' = 'Yes')),
+         professional_music_training_yn = as.factor(professional_music_training_yn),
+         professional_music_training_yn_num = as.numeric(fct_recode(professional_music_training_yn,
+                                                                    '0' = 'No',
+                                                                    '1' = 'Yes')),
+         occupation_music_yn = as.factor(occupation_music_yn),
+         occupation_music_yn_num = as.numeric(fct_recode(occupation_music_yn,
+                                                         '0' = 'No',
+                                                         '1' = 'Yes')),
+         stucksong_pleasing_annoying = fct_relevel(as.factor(stucksong_pleasing_annoying),
+                                                   'Very annoying', 'Somewhat annoying', 'Neither annoying nor pleasing', 'Somewhat pleasing', 'Very pleasing'),
+         stucksong_pleasing_annoying_num = as.numeric(fct_recode(stucksong_pleasing_annoying,
+                                           '1' = 'Very annoying',
+                                           '2' = 'Somewhat annoying',
+                                           '3' = 'Neither annoying nor pleasing',
+                                           '4' = 'Somewhat pleasing',
+                                           '5' = 'Very pleasing')),
+         lastmonth_satisfaction = fct_relevel(as.factor(lastmonth_satisfaction),
+                                              'Not satisfied at all', 'Only a little satisfied', 'Somewhat satisfied', 'Very satisfied', 'Extremely satisfied'),
+         lastmonth_satisfaction_num = as.numeric(fct_recode(lastmonth_satisfaction,
+                                                  '1' = 'Not satisfied at all',
+                                                  '2' = 'Only a little satisfied',
+                                                  '3' = 'Somewhat satisfied',
+                                                  '4' = 'Very satisfied',
+                                                  '5' = 'Extremely satisfied')),
+         lastmonth_goodbad_felt = fct_relevel(as.factor(lastmonth_goodbad_felt),
+                                              'Very bad', 'Somewhat bad', 'Neither good nor bad', 'Somewhat good', 'Very good'),
+         lastmonth_goodbad_felt_num = as.numeric(fct_recode(lastmonth_goodbad_felt,
+                                             '1' = 'Very bad',
+                                             '2' = 'Somewhat bad',
+                                             '3' = 'Neither good nor bad',
+                                             '4' = 'Somewhat good',
+                                             '5' = 'Very good')),
+         introvert_extrovert = fct_relevel(as.factor(introvert_extrovert),
+                                           'A lot more introverted', 'A bit more introverted', 'About the same', 'A bit more extroverted', 'A lot more extroverted'),
+         introvert_extrovert_num = as.numeric(fct_recode(introvert_extrovert,
+                                             '1' = 'A lot more introverted',
+                                             '2' = 'A bit more introverted',
+                                             '3' = 'About the same',
+                                             '4' = 'A bit more extroverted',
+                                             '5' = 'A lot more extroverted'))) %>%
+  mutate_at(vars(starts_with('grid_how_often')), list(~fct_relevel(as.factor(.),
+                                                                   'Never', 'Sometimes', 'Often'))) %>%
+  mutate_at(vars(starts_with('grid_how_often')), list(num = ~as.numeric(fct_recode(.,
+                                                       '1' = 'Never',
+                                                       '2' = 'Sometimes',
+                                                       '3' = 'Often')))) %>%
+  mutate(age = 2021 - year_born,
+         country = as.factor(country),
+         education_years = ifelse(education_years %in% c('12', '13', '14', '15', '16',
+                                                            'More than 16',
+                                                            'More than 12'), '12 or more', 'Less than 12'),
+         education_years = as.factor(education_years),
+         gender = case_when(gender %in% c('Male', 'Female', 'Non-binary or Another Gender') ~ gender, 
+                            gender == 'Other' ~ 'Non-binary or Another Gender'),
+         gender = fct_relevel(as.factor(gender), 'Male', 'Female'),
+         religious_yn = as.factor(religious_yn),
+         political_pov = fct_relevel(as.factor(political_pov),
+                                     'Not political', 'Very conservative', 'Conservative', 'Moderate', 'Liberal', 'Very liberal')) %>%
+  mutate(hearmusic_experience_openend = hearmusic_experience_openend) %>%
+  mutate(country = fct_recode(country, 'United Kingdom' = 'England', 
+                                        'United Kingdom' = 'Scotland', 
+                                        'United Kingdom' = 'Wales')) %>%
+  mutate(country_usa_yn = as.factor(ifelse(country == 'United States', 'United States', 'Outside US')))
+
+```
+
+# Method
+
+This survey was written in Google Forms and distributed in /r/SampleSize on April 22, 2021. You can download the data [here](https://docs.google.com/spreadsheets/d/1u8_iW25YpL2__q_0FJQ5CQ-LNQkUchz3yVOFUm2oHIQ/edit) -- which includes the question wording in the header of each column -- if you want to play around with it yourself.
+
+# Summary of Data
+
+In total, the survey collected responses from 1829 individuals (with some non-response in a few answers, so the analysis below uses lower sample size in various places). Keep in mind too that /r/SampleSize is a convenience sample, so there will be some limitations in generalizing it to a larger population. 
+
+Based on the self-reported data, the participant sample's average age was 34.9 (median: 27), and gender was fairly evenly distributed (men: 46.7%; women: 46.0%; non-binary/another gender folks: 7.3%). Politics was a bit more skewed, with only 16.2% of people reporting conservative, 15.9% moderate, and 60.1% liberal (with 7.7% not political). 72.8% of participants said they were not religious; 74.5% of people had 12 or more years of education. And the sample was skewed towards the United States, with only 32.1% of survey takers outside the US.
+
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+
+# ====================
+# SUMMARY
+# ====================
+
+colnames(musichead.df)
+str(musichead.df)
+summary(musichead.df)
+
+nrow(musichead.df) #1829
+
+
+# --------------------
+# AGE
+# --------------------
+
+musichead.df %>% select(age) %>%
+  na.omit() %>%
+  summary()
+
+# Mean: 34.9
+
+# --------------------
+# GENDER
+# --------------------
+
+musichead.df %>% select(gender) %>%
+  na.omit() %>%
+  group_by(gender) %>%
+  summarise(count = n()) %>%
+  ungroup() %>%
+  mutate(percent = round(100 * count / sum(count), 1))
+  
+# Male
+# 841
+# 46.7
+
+# Female
+# 828
+# 46.0
+
+# Non-binary or Another Gender
+# 131
+# 7.3
+
+# --------------------
+# POLITICS
+# --------------------
+
+musichead.df %>% select(political_pov) %>%
+  na.omit() %>%
+  group_by(political_pov) %>%
+  summarise(count = n()) %>%
+  ungroup() %>%
+  mutate(percent = round(100 * count / sum(count), 1))
+
+# Not political
+# 138
+# 7.7
+
+# Very conservative
+# 81
+# 4.5
+
+# Conservative
+# 210
+# 11.7
+
+# Moderate
+# 285
+# 15.9
+
+# Liberal
+# 455
+# 25.4
+
+# Very liberal
+# 621
+# 34.7
+
+# --------------------
+# RELIGION
+# --------------------
+
+musichead.df %>% select(religious_yn) %>%
+  na.omit() %>%
+  group_by(religious_yn) %>%
+  summarise(count = n()) %>%
+  ungroup() %>%
+  mutate(percent = round(100 * count / sum(count), 1))
+
+# No
+# 1309
+# 72.8
+# 
+# Yes
+# 489
+# 27.2
+
+# --------------------
+# EDUCATION
+# --------------------
+
+musichead.df %>% select(education_years) %>%
+  na.omit() %>%
+  group_by(education_years) %>%
+  summarise(count = n()) %>%
+  ungroup() %>%
+  mutate(percent = round(100 * count / sum(count), 1))
+
+# No
+# 1309
+# 72.8
+# 
+# Yes
+# 489
+# 27.2
+
+# --------------------
+# COUNTRY
+# --------------------
+
+musichead.df %>% select(country_usa_yn) %>%
+  na.omit() %>%
+  group_by(country_usa_yn) %>%
+  summarise(count = n()) %>%
+  ungroup() %>%
+  mutate(percent = round(100 * count / sum(count), 1))
+
+# Outside US
+# 568
+# 32.2
+# 
+# United States
+# 1198
+# 67.8
+
+```
+
+# Analysis
+
+## Proportions Analysis
+
+### Music Frequency
+
+First, let's take a look at how often people said they had experienced musical earworms.
+
+A majority of people have said they frequently or almost always have music playing in their head (76.8%)! And surprisingly, only 1.8% of participants said they never experienced these mental tunes.
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.width = 6, fig.height = 4}
+
+# ====================
+# MUSIC FREQUENCY
+# ====================
+musichead.df %>%
+  select(how_frequently_hear_music) %>%
+  pivot_longer(cols = how_frequently_hear_music, names_to = 'variable', values_to = 'value') %>%
+  filter(!is.na(value)) %>%
+  filter(!is.na(variable)) %>%
+  group_by(variable) %>%
+  as_survey_design() %>%
+  group_by(variable, value) %>%
+  summarize(proportions = survey_mean(vartype = 'ci', level = c(0.95)),
+            total = survey_total()) %>%
+  mutate(perc_val = round(proportions*100, 1),
+         upper.ci = round(proportions_low*100, 1),
+         lower.ci = round(proportions_upp*100, 1)) %>%
+  mutate(pos = perc_val + 5) %>%
+  mutate(perc_val_text = paste(perc_val, '%', sep='')) %>%
+  ggplot(., aes(x = value, y = perc_val, fill = value)) +
+  geom_bar(stat='identity', position = 'dodge') + ylab("Percent") + xlab("") +
+  geom_errorbar(aes(ymax = upper.ci, ymin = lower.ci), width = 0, alpha = 0.5, position = position_dodge(width = 1)) +
+  geom_text(aes(label = perc_val_text, y = pos + 10), size = 3, position = position_dodge(width = 1)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_discrete(guide = 'none') +
+  ggtitle('Estimated (Unweighted) Music in Head Frequency', subtitle = "How frequently do you hear music playing in your head, if at all?")
+
+```
+
+Most people state they are hearing both instrumental sounds and song lyrics.
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.width = 6, fig.height = 4}
+
+# ====================
+# MUSIC KIND
+# ====================
+musichead.df %>%
+  select(kind_of_music) %>%
+  pivot_longer(cols = kind_of_music, names_to = 'variable', values_to = 'value') %>%
+  filter(!is.na(value)) %>%
+  filter(!is.na(variable)) %>%
+  group_by(variable) %>%
+  as_survey_design() %>%
+  group_by(variable, value) %>%
+  summarize(proportions = survey_mean(vartype = 'ci', level = c(0.95)),
+            total = survey_total()) %>%
+  mutate(perc_val = round(proportions*100, 1),
+         upper.ci = round(proportions_low*100, 1),
+         lower.ci = round(proportions_upp*100, 1)) %>%
+  mutate(pos = perc_val + 5) %>%
+  mutate(perc_val_text = paste(perc_val, '%', sep='')) %>%
+  ggplot(., aes(x = value, y = perc_val, fill = value)) +
+  geom_bar(stat='identity', position = 'dodge') + ylab("Percent") + xlab("") +
+  geom_errorbar(aes(ymax = upper.ci, ymin = lower.ci), width = 0, alpha = 0.5, position = position_dodge(width = 1)) +
+  geom_text(aes(label = perc_val_text, y = pos + 10), size = 3, position = position_dodge(width = 1)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_discrete(guide = 'none') +
+  ggtitle('Estimated (Unweighted) Kind of Music', subtitle = "When you hear music in your head, what kind of music is it?")
+
+```
+
+Interestingly, when people hear music in their heads, people report that it's largely a good experience (67.6% vs. 9.9%). 
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.width = 6, fig.height = 4}
+
+# ====================
+# WHEN IN HEAD, PLEASANT OR ANNOYING
+# ====================
+musichead.df %>%
+  select(pleasant_or_annoying) %>%
+  pivot_longer(cols = pleasant_or_annoying, names_to = 'variable', values_to = 'value') %>%
+  filter(!is.na(value)) %>%
+  filter(!is.na(variable)) %>%
+  group_by(variable) %>%
+  as_survey_design() %>%
+  group_by(variable, value) %>%
+  summarize(proportions = survey_mean(vartype = 'ci', level = c(0.95)),
+            total = survey_total()) %>%
+  mutate(perc_val = round(proportions*100, 1),
+         upper.ci = round(proportions_low*100, 1),
+         lower.ci = round(proportions_upp*100, 1)) %>%
+  mutate(pos = perc_val + 5) %>%
+  mutate(perc_val_text = paste(perc_val, '%', sep='')) %>%
+  ggplot(., aes(x = value, y = perc_val, fill = value)) +
+  geom_bar(stat='identity', position = 'dodge') + ylab("Percent") + xlab("") +
+  geom_errorbar(aes(ymax = upper.ci, ymin = lower.ci), width = 0, alpha = 0.5, position = position_dodge(width = 1)) +
+  geom_text(aes(label = perc_val_text, y = pos + 10), size = 3, position = position_dodge(width = 1)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_discrete(guide = 'none') +
+  ggtitle('Estimated (Unweighted) When In Head, Pleasant vs. Annoying', subtitle = "When you hear music in your head, is it a pleasant or annoying experience?")
+
+```
+
+Maybe a bit of a surprise, the length in which music stuck in your head lasts is pretty evently distributed, with almost equal amount of people experiencing less than 15 minutes (24.5%) to over many hours (24%).
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.width = 6, fig.height = 4}
+
+# ====================
+# LASTS HOW LONG
+# ====================
+musichead.df %>%
+  select(music_last_how_long) %>%
+  pivot_longer(cols = music_last_how_long, names_to = 'variable', values_to = 'value') %>%
+  filter(!is.na(value)) %>%
+  filter(!is.na(variable)) %>%
+  group_by(variable) %>%
+  as_survey_design() %>%
+  group_by(variable, value) %>%
+  summarize(proportions = survey_mean(vartype = 'ci', level = c(0.95)),
+            total = survey_total()) %>%
+  mutate(perc_val = round(proportions*100, 1),
+         upper.ci = round(proportions_low*100, 1),
+         lower.ci = round(proportions_upp*100, 1)) %>%
+  mutate(pos = perc_val + 5) %>%
+  mutate(perc_val_text = paste(perc_val, '%', sep='')) %>%
+  ggplot(., aes(x = value, y = perc_val, fill = value)) +
+  geom_bar(stat='identity', position = 'dodge') + ylab("Percent") + xlab("") +
+  geom_errorbar(aes(ymax = upper.ci, ymin = lower.ci), width = 0, alpha = 0.5, position = position_dodge(width = 1)) +
+  geom_text(aes(label = perc_val_text, y = pos + 10), size = 3, position = position_dodge(width = 1)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_discrete(guide = 'none') +
+  ggtitle('Estimated (Unweighted) How Long Music Lasts', subtitle = "When you hear music in your head, how long does it tend to last?")
+
+```
+
+And generally, it seems to be one song on repeat, rather than a mix of songs or clips of music.
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.width = 6, fig.height = 4}
+
+# ====================
+# TYPE HEARD MOST OFTEN
+# ====================
+musichead.df %>%
+  select(music_type_hear_most_often) %>%
+  pivot_longer(cols = music_type_hear_most_often, names_to = 'variable', values_to = 'value') %>%
+  filter(!is.na(value)) %>%
+  filter(!is.na(variable)) %>%
+  group_by(variable) %>%
+  as_survey_design() %>%
+  group_by(variable, value) %>%
+  summarize(proportions = survey_mean(vartype = 'ci', level = c(0.95)),
+            total = survey_total()) %>%
+  mutate(perc_val = round(proportions*100, 1),
+         upper.ci = round(proportions_low*100, 1),
+         lower.ci = round(proportions_upp*100, 1)) %>%
+  mutate(pos = perc_val + 5) %>%
+  mutate(perc_val_text = paste(perc_val, '%', sep='')) %>%
+  ggplot(., aes(x = value, y = perc_val, fill = value)) +
+  geom_bar(stat='identity', position = 'dodge') + ylab("Percent") + xlab("") +
+  geom_errorbar(aes(ymax = upper.ci, ymin = lower.ci), width = 0, alpha = 0.5, position = position_dodge(width = 1)) +
+  geom_text(aes(label = perc_val_text, y = pos + 10), size = 3, position = position_dodge(width = 1)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_discrete(guide = 'none') +
+  ggtitle('Estimated (Unweighted) Type of Music Heard Most Often', subtitle = "During an average period when you hear music in your head, which of the following do you tend to hear MOST often?")
+
+```
+
+What's most interesting is that when asked about pleasing or annoying experiences with having music *stuck* in your head, the responses differed significantly from the last response (ie., generally hearing music in your head). Participants largely stated that it was an annoying experience (42.2% vs. 23.8%).
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.width = 6, fig.height = 4}
+
+# ====================
+# WHEN STUCK, PLEASING OR ANNOYING
+# ====================
+musichead.df %>%
+  select(stucksong_pleasing_annoying) %>%
+  pivot_longer(cols = stucksong_pleasing_annoying, names_to = 'variable', values_to = 'value') %>%
+  filter(!is.na(value)) %>%
+  filter(!is.na(variable)) %>%
+  group_by(variable) %>%
+  as_survey_design() %>%
+  group_by(variable, value) %>%
+  summarize(proportions = survey_mean(vartype = 'ci', level = c(0.95)),
+            total = survey_total()) %>%
+  mutate(perc_val = round(proportions*100, 1),
+         upper.ci = round(proportions_low*100, 1),
+         lower.ci = round(proportions_upp*100, 1)) %>%
+  mutate(pos = perc_val + 5) %>%
+  mutate(perc_val_text = paste(perc_val, '%', sep='')) %>%
+  ggplot(., aes(x = value, y = perc_val, fill = value)) +
+  geom_bar(stat='identity', position = 'dodge') + ylab("Percent") + xlab("") +
+  geom_errorbar(aes(ymax = upper.ci, ymin = lower.ci), width = 0, alpha = 0.5, position = position_dodge(width = 1)) +
+  geom_text(aes(label = perc_val_text, y = pos + 10), size = 3, position = position_dodge(width = 1)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_discrete(guide = 'none') +
+  ggtitle('Estimated (Unweighted) Pleasing/Annoying When Stuck', subtitle = "If you happen to get one song stuck in your head, how pleasing or annoying is that experience?")
+
+```
+
+## Regression Analysis
+
+To explore the relationship of various factors with musical earworm experiences, a few basic regressions are presented below. The outcome (dependent) variables are ordinal, but for the sake of exploration, I've used basic models that assume they're linear or binary (if anyone reading want to do more rigorous analysis -- e.g., with ordinal logistic regressions -- please share your results!).
+
+### How Frequently People Hear Music in Their Heads
+
+How often people hear music in their heads seems to be related to a number of factors!
+
+First, attitudes (e.g., well-being measures, or introversion) do not seem to be related. However, some behaviors do seem to be: though interestingly, whistling is not associated, while singing, humming, dancing, and tapping are associated with more frequent head-music.
+
+Next, perceptions are associated in some interesting ways: people who perceive they have an inner voice and find it easier to visualize objects in their head are also hearing music more frequently. Further, people who find it easier to focus their attention report hearing music less frequently.
+
+As far as traits go, if you have hobbies or jobs related to music, you are more likely to hear music freqently in your head, but not if you have been musically trained!
+
+And finally, for demographics: there seem to be no correlations with music frequency. However, there is an interesting trend in political viewpoints, where conservatives may hear music in their heads more frequently and liberals less frequently (but the error bars are wide and not significant).
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.width = 12, fig.height = 6}
+
+# ====================
+# REGRESSION - HOW FREQUENTLY HEAR
+# ====================
+
+frequency.reg <- musichead.df %>%
+  select(how_frequently_hear_music,
+         how_frequently_hear_music_num,
+         how_often_daydream_num,
+         visualize_objects_easy_hard_num,
+         focus_attention_easy_hard_num,
+         inner_voice_yn_num,
+         hobbies_related_music_yn_num,
+         professional_music_training_yn_num,
+         occupation_music_yn_num,
+         lastmonth_satisfaction_num,
+         lastmonth_goodbad_felt_num,
+         introvert_extrovert_num,
+         grid_how_often_whistle_num,
+         grid_how_often_dance_num,
+         grid_how_often_hum_num,
+         grid_how_often_sing_num,
+         grid_how_often_tap_num,
+         age,
+         gender,
+         country_usa_yn,
+         political_pov,
+         religious_yn,
+         education_years)
+  
+# regular LM regression
+frequency.reg.model <- lm(how_frequently_hear_music_num ~ 
+                              how_often_daydream_num +
+                              visualize_objects_easy_hard_num +
+                              focus_attention_easy_hard_num +
+                              inner_voice_yn_num +
+                              hobbies_related_music_yn_num +
+                              professional_music_training_yn_num +
+                              occupation_music_yn_num +
+                              lastmonth_satisfaction_num +
+                              lastmonth_goodbad_felt_num +
+                              introvert_extrovert_num +
+                              grid_how_often_whistle_num +
+                              grid_how_often_dance_num +
+                              grid_how_often_hum_num +
+                              grid_how_often_sing_num +
+                              grid_how_often_tap_num +
+                              age +
+                              gender +
+                              country_usa_yn +
+                              political_pov +
+                              religious_yn +
+                              education_years,
+                            data = frequency.reg)
+
+summary(frequency.reg.model)
+
+frequency.reg.model.tidy <- tidy(frequency.reg.model, conf.int = TRUE)
+frequency.reg.model.tidy <- frequency.reg.model.tidy %>%
+  mutate(statsig = as.factor(ifelse(p.value < 0.05, 'Yes', 'No'))) %>%
+  filter(term != '(Intercept)') %>%
+  mutate(term = fct_recode(term, 
+                           "Perceptions: How Often Daydream" = "how_often_daydream_num",
+                           "Perceptions: How Easy to Visualize Objects" = "visualize_objects_easy_hard_num",
+                           "Perceptions: How Easy to Focus Attention" = "focus_attention_easy_hard_num", 
+                           "Perceptions: Have Inner Voice (Binary)" = "inner_voice_yn_num",                 
+                           "Traits: Hobbies Related to Music (Binary)" = "hobbies_related_music_yn_num", 
+                           "Traits: Professionally Trained in Music (Binary)" = "professional_music_training_yn_num", 
+                           "Traits: Occupation Related to Music (Binary)" = "occupation_music_yn_num", 
+                           "Attitudes: Life Satisfaction, Last Month" = "lastmonth_satisfaction_num",         
+                           "Attitudes: Feeling Good/Bad, Last Month" = "lastmonth_goodbad_felt_num", 
+                           "Attitudes: Introvert/Extrovert" = "introvert_extrovert_num",            
+                           "Behavior: How Often Whistle" = "grid_how_often_whistle_num",  
+                           "Behavior: How Often Dance" = "grid_how_often_dance_num",           
+                           "Behavior: How Often Hum" = "grid_how_often_hum_num",  
+                           "Behavior: How Often Sing" = "grid_how_often_sing_num",            
+                           "Behavior: How Often Tap" = "grid_how_often_tap_num", 
+                           "Demographics: Gender, Female (Baseline: Male)" = 'genderFemale',
+                           "Demographics: Gender, Non-Binary/Another Gender(Baseline: Male)" = 'genderNon-binary or Another Gender',
+                           "Demographics: Age" = "age",                                
+                           "Demographics: Country, United States (Baseline: Outside US)" = "country_usa_ynUnited States",  
+                           "Demographics: Political POV - (1) Very Conservative (Baseline: Non Political)" = "political_povVery conservative",     
+                           "Demographics: Political POV - (2) Conservative (Baseline: Non Political)" = "political_povConservative",   
+                           "Demographics: Political POV - (3) Moderate (Baseline: Non Political)" = "political_povModerate",              
+                           "Demographics: Political POV - (4) Liberal (Baseline: Non Political)" = "political_povLiberal",   
+                           "Demographics: Political POV - (5) Very Liberal (Baseline: Non Political)" = "political_povVery liberal",          
+                           "Demographics: Religious - Yes (Binary; Baseline: No)" = "religious_ynYes",    
+                           "Demographics: Education - Less than 12 Years (Baseline: 12+)" = "education_yearsLess than 12")) %>%
+  mutate(term = as.factor(as.character(term)))
+
+ggplot(frequency.reg.model.tidy, 
+       aes(x = term, y = estimate, color = statsig)) + 
+  geom_hline(yintercept = 0, linetype = 'dashed') +
+  geom_point(size=1, position = position_dodge(width = 1)) + geom_pointrange(aes(ymax = conf.high, ymin = conf.low), position = position_dodge(width = 1)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = margin(10, 10, 10, 100)) +
+  xlab("Variables") + ylab("Coefficient") +
+  coord_flip() +
+  scale_color_discrete(name = "Statistically Significant?", labels = c('No', 'Yes')) +
+  ggtitle("Linear Regression, Predicting How Frequently Hear Music in Head",
+          subtitle = "Controlling for Demographics (Age, Country, Politics, Religion, and Education) \nand Self-Reported Attitudes, Behaviors, Perceptions, & Traits") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+### Pleasing or Annoying When Stuck
+
+Compared to frequency, perception of pleasure or annoyance from music stuck in your head had far fewer relationships.
+
+In this model we find three primary associations:
+
+1. If you have hobbies related to music, you're more likely to find stuck music pleasing.
+
+2. If it's easier for you to focus your thoughts, you find stuck music more pleasing.
+
+3. If you hum or dance more often, you find pleasure in having music stuck in your head.
+
+There's also an interesting element of gender here, where women find more annoyance than other folks!
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.width = 12, fig.height = 6}
+
+# ====================
+# REGRESSION - STUCK SONG, PLEASING/ANNOYING
+# ====================
+
+stucksong_effect.reg <- musichead.df %>%
+  select(stucksong_pleasing_annoying_num,
+         how_often_daydream_num,
+         visualize_objects_easy_hard_num,
+         focus_attention_easy_hard_num,
+         inner_voice_yn_num,
+         hobbies_related_music_yn_num,
+         professional_music_training_yn_num,
+         occupation_music_yn_num,
+         lastmonth_satisfaction_num,
+         lastmonth_goodbad_felt_num,
+         introvert_extrovert_num,
+         grid_how_often_whistle_num,
+         grid_how_often_dance_num,
+         grid_how_often_hum_num,
+         grid_how_often_sing_num,
+         grid_how_often_tap_num,
+         age,
+         gender,
+         country_usa_yn,
+         political_pov,
+         religious_yn,
+         education_years)
+
+stucksong_effect.reg <- stucksong_effect.reg %>%
+  mutate(stucksong_pleasing_annoying_binary = case_when(stucksong_pleasing_annoying_num < 3 ~ 0,
+                                                        stucksong_pleasing_annoying_num > 3 ~ 1,
+                                                        stucksong_pleasing_annoying_num == 3 ~ -1)) %>%
+  filter(stucksong_pleasing_annoying_binary > -1)
+
+# regular LM regression
+stucksong_effect.reg.model <- glm(stucksong_pleasing_annoying_binary ~ 
+                            how_often_daydream_num +
+                            visualize_objects_easy_hard_num +
+                            focus_attention_easy_hard_num +
+                            inner_voice_yn_num +
+                            hobbies_related_music_yn_num +
+                            professional_music_training_yn_num +
+                            occupation_music_yn_num +
+                            lastmonth_satisfaction_num +
+                            lastmonth_goodbad_felt_num +
+                            introvert_extrovert_num +
+                            grid_how_often_whistle_num +
+                            grid_how_often_dance_num +
+                            grid_how_often_hum_num +
+                            grid_how_often_sing_num +
+                            grid_how_often_tap_num +
+                            age +
+                            gender +
+                            country_usa_yn +
+                            political_pov +
+                            religious_yn +
+                            education_years,
+                          data = stucksong_effect.reg, family = 'binomial')
+
+summary(stucksong_effect.reg.model)
+
+stucksong_effect.reg.model.tidy <- tidy(stucksong_effect.reg.model, conf.int = TRUE)
+stucksong_effect.reg.model.tidy <- stucksong_effect.reg.model.tidy %>%
+  mutate(statsig = as.factor(ifelse(p.value < 0.05, 'Yes', 'No'))) %>%
+  filter(term != '(Intercept)') %>%
+  mutate(term = fct_recode(term, 
+                           "Perceptions: How Often Daydream" = "how_often_daydream_num",
+                           "Perceptions: How Easy to Visualize Objects" = "visualize_objects_easy_hard_num",
+                           "Perceptions: How Easy to Focus Attention" = "focus_attention_easy_hard_num", 
+                           "Perceptions: Have Inner Voice (Binary)" = "inner_voice_yn_num",                 
+                           "Traits: Hobbies Related to Music (Binary)" = "hobbies_related_music_yn_num", 
+                           "Traits: Professionally Trained in Music (Binary)" = "professional_music_training_yn_num", 
+                           "Traits: Occupation Related to Music (Binary)" = "occupation_music_yn_num", 
+                           "Attitudes: Life Satisfaction, Last Month" = "lastmonth_satisfaction_num",         
+                           "Attitudes: Feeling Good/Bad, Last Month" = "lastmonth_goodbad_felt_num", 
+                           "Attitudes: Introvert/Extrovert" = "introvert_extrovert_num",            
+                           "Behavior: How Often Whistle" = "grid_how_often_whistle_num",  
+                           "Behavior: How Often Dance" = "grid_how_often_dance_num",           
+                           "Behavior: How Often Hum" = "grid_how_often_hum_num",  
+                           "Behavior: How Often Sing" = "grid_how_often_sing_num",            
+                           "Behavior: How Often Tap" = "grid_how_often_tap_num",   
+                           "Demographics: Gender, Female (Baseline: Male)" = 'genderFemale',
+                           "Demographics: Gender, Non-Binary/Another Gender(Baseline: Male)" = 'genderNon-binary or Another Gender',
+                           "Demographics: Age" = "age",                                
+                           "Demographics: Country, United States (Baseline: Outside US)" = "country_usa_ynUnited States",  
+                           "Demographics: Political POV - (1) Very Conservative (Baseline: Non Political)" = "political_povVery conservative",     
+                           "Demographics: Political POV - (2) Conservative (Baseline: Non Political)" = "political_povConservative",   
+                           "Demographics: Political POV - (3) Moderate (Baseline: Non Political)" = "political_povModerate",              
+                           "Demographics: Political POV - (4) Liberal (Baseline: Non Political)" = "political_povLiberal",   
+                           "Demographics: Political POV - (5) Very Liberal (Baseline: Non Political)" = "political_povVery liberal",          
+                           "Demographics: Religious - Yes (Binary; Baseline: No)" = "religious_ynYes",    
+                           "Demographics: Education - Less than 12 Years (Baseline: 12+)" = "education_yearsLess than 12")) %>%
+  mutate(term = as.factor(as.character(term)))
+
+ggplot(stucksong_effect.reg.model.tidy, 
+       aes(x = as.factor(term), y = estimate, color = as.factor(statsig))) + 
+  geom_hline(yintercept = 0, linetype = 'dashed') +
+  geom_point(size=1, position = position_dodge(width = 1)) + geom_pointrange(aes(ymax = conf.high, ymin = conf.low), position = position_dodge(width = 1)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = margin(10, 10, 10, 100)) +
+  xlab("Variables") + ylab("Coefficient") +
+  #ylim(0, 0.2) +
+  #theme(legend.position = "none") +
+  coord_flip() +
+  scale_color_discrete(name = "Statistically Significant?", labels = c('No', 'Yes')) +
+  ggtitle("Logistic Regression, Predicting If Stuck Song is Pleasing or Annoying",
+          subtitle = "(Removing Midpoint in Prediction) \nControlling for Demographics (Age, Country, Politics, Religion, and Education) \nand Self-Reported Attitudes, Behaviors, Perceptions, & Traits") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## Experiences Explained
+
+Finally, let's take a look at some open-end responses. In one question, the survey asked: **When you hear music in your head, describe what the experience is like (in as much detail as possible).**
+
+Below, I use some text analysis techniques to explore participants explanations. The chart below illustrates a basic sentiment analysis, which shows the the commonly used words between positive-neutral experiences vs. negative ones:
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.width = 8, fig.height = 4}
+
+musichead.df.text <- musichead.df %>%
+  mutate(stucksong_pleasing_annoying_buckets = ifelse(stucksong_pleasing_annoying_num >= 3, 'Positive/Neutral', 'Negative')) %>% 
+  select(hearmusic_experience_openend, stucksong_pleasing_annoying_buckets) %>% #1830
+  na.omit() %>% #1128
+  mutate(id = seq.int(nrow(.))) %>%
+  unnest_tokens(word, hearmusic_experience_openend) %>%
+  anti_join(get_stopwords())
+
+#musichead.df.text %>% count(word, sort = TRUE)
+
+bing <- get_sentiments("bing")
+
+bing_word_counts_joined <- musichead.df.text %>%
+  inner_join(bing) %>%
+  group_by(stucksong_pleasing_annoying_buckets) %>%
+  count(word, sentiment, sort = TRUE)
+
+#View(bing_word_counts_joined)
+
+bing_word_counts_joined %>%
+  filter(n > 5) %>%
+  mutate(stucksong_pleasing_annoying_buckets = as.factor(stucksong_pleasing_annoying_buckets)) %>%
+  mutate(n = ifelse(sentiment == "negative", -n, n)) %>%
+  mutate(word = reorder(word, n)) %>% 
+  filter(word != 'like') %>%
+  group_by(stucksong_pleasing_annoying_buckets) %>%
+  top_n(20) %>%
+  ungroup() %>%
+  mutate(word = reorder_within(word, n, stucksong_pleasing_annoying_buckets)) %>%
+  mutate(word = as.factor(word)) %>%
+  ggplot(., aes(x = word, y = n, fill = sentiment)) +
+  geom_col() +
+  scale_fill_discrete(guide = 'none') + 
+  scale_x_reordered() +
+  coord_flip() +
+  facet_wrap(~stucksong_pleasing_annoying_buckets, scales = 'free') +
+  ylab("Sentiment Score") + xlab("Words") +
+  ggtitle("Sentiment Text Analysis of Open-Ended Responses",
+          subtitle = "Faceted between Negative ('Annoying') and Neutral/Positive ('Pleasing') Stuck-in-Head Responses \nWhen you hear music in your head, describe what the experience is like (in as much detail as possible).")
+
+```
+
+## Final Thoughts
+
+Certainly some unique findings to satiate those shower thoughts! Maybe the most interesting finding here is the differences in pleasure vs. annoyance, and how these results actually differ somewhat from what the cited academic articles have found about similar pleasurable experiences with musical earworms. 
+
+If you have ideas for the next survey in the Shower Thought Surveys series, please comment on the results post in /r/SampleSize (click [here](https://www.reddit.com/r/SampleSize/comments/106u2kp/results_after_a_year_and_a_half_of_delay_the/))!
